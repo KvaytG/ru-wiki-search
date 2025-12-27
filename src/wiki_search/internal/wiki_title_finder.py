@@ -9,14 +9,14 @@ import requests
 from rapidfuzz import fuzz
 from tqdm import tqdm
 
-CURRENT_DIR = pathlib.Path(__file__).parent.resolve()
-RESOURCES_PATH = CURRENT_DIR.parent / "resources"
+_CURRENT_DIR = pathlib.Path(__file__).parent.resolve()
+_RESOURCES_PATH = _CURRENT_DIR.parent / "resources"
 
 
 class WikiTitleFinder:
     def __init__(self):
-        self._db_file = os.path.join(RESOURCES_PATH, "wiki-titles.db")
-        self._archive_file = os.path.join(RESOURCES_PATH, "ru-wiki-latest-all-titles.gz")
+        self._db_file = os.path.join(_RESOURCES_PATH, "wiki-titles.db")
+        self._archive_file = os.path.join(_RESOURCES_PATH, "ru-wiki-latest-all-titles.gz")
         self._morph = pymorphy3.MorphAnalyzer()
         self._lemma_cache = {}
         self._conn = None
@@ -38,7 +38,7 @@ class WikiTitleFinder:
         return " ".join([self._get_lemma(w) for w in words])
 
     def _download_and_build(self):
-        os.makedirs(RESOURCES_PATH, exist_ok=True)
+        os.makedirs(_RESOURCES_PATH, exist_ok=True)
         url = "https://dumps.wikimedia.org/ruwiki/latest/ruwiki-latest-all-titles-in-ns0.gz"
         try:
             if not os.path.exists(self._archive_file):
