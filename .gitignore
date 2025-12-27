@@ -16,3 +16,6 @@ venv/
 # Tests
 tests/
 test/
+
+# Resources
+src/wiki_search/resources/

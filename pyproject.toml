@@ -1,6 +1,6 @@
 [project]
 name = "ru-wiki-search"
-version = "1.0.0"
+version = "1.0.1"
 description = "Smart search on Russian Wikipedia."
 readme = "README.md"
 requires-python = ">=3.11"
