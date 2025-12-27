@@ -117,15 +117,33 @@ class WikiTitleFinder:
         query_lemmas = " ".join([self._get_lemma(w) for w in raw_words])
 
         def score_func(row):
-            title, lemmas = row
-            title_lower = title.lower()
-            if query_lower == title_lower: return 200.0
-            score_raw = fuzz.WRatio(query_lower, title_lower)
+            title_orig, lemmas = row
+            title = title_orig.lower()
+            # 1. Абсолютный приоритет точному совпадению
+            if query_lower == title:
+                return 1000.0
+            # 2. Базовые метрики
+            score_raw = fuzz.WRatio(query_lower, title)
             score_lemma = fuzz.token_set_ratio(query_lemmas, lemmas)
-            word_matches = sum(1 for w in raw_words if w in title_lower or self._get_lemma(w) in lemmas)
+            word_matches = sum(1 for w in raw_words if w in title or self._get_lemma(w) in lemmas)
             bonus = (word_matches / len(raw_words)) * 20
-            length_penalty = 1.0 - (min(abs(len(query_lower) - len(title_lower)), 20) / 40)
-            return (score_raw * 0.4 + score_lemma * 0.4 + bonus) * length_penalty
+            # 3. Штраф за скобки (уточнения в Википедии)
+            # Если в заголовке есть "(", это почти всегда вторичная статья
+            parentheses_penalty = 1.0
+            if '(' in title:
+                parentheses_penalty = 0.4
+            # 4. Асимметричный штраф за длину
+            # Лишние слова в заголовке хуже, чем их нехватка
+            title_words = self._word_pattern.findall(title)
+            extra_words_count = max(0, len(title_words) - len(raw_words))
+            # За каждое лишнее слово снижаем вес на 15%
+            word_count_penalty = 0.85 ** extra_words_count
+            # 5. Доп. фильтр
+            char_len_penalty = 1.0 - (min(abs(len(query_lower) - len(title)), 20) / 40)
+            # Итоговый расчет
+            final_score = (score_raw * 0.4 + score_lemma * 0.4 + bonus)
+            final_score *= char_len_penalty * parentheses_penalty * word_count_penalty
+            return final_score
 
         ranked = sorted(rows, key=score_func, reverse=True)
         return [item[0] for item in ranked[:top_n]]
