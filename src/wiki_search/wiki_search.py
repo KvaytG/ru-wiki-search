@@ -1,6 +1,5 @@
 import re
 from functools import lru_cache
-from typing import Optional
 import regex
 import wikipediaapi
 from .internal.constants import PROJECT_VERSION, PROJECT_NAME
@@ -29,7 +28,7 @@ class WikiSearch:
         return [s.strip() for s in _SENTENCES_PATTERN.split(text) if s.strip()][:count]
 
     @lru_cache(maxsize=100)
-    def search(self, query: str) -> Optional[dict]:
+    def search(self, query: str) -> dict | None:
         query = query.strip()
         results = self._wiki_title_finder.find(query, 1)
         if not results:
