@@ -2,7 +2,7 @@ import re
 from functools import lru_cache
 import regex
 import wikipediaapi
-from .internal.constants import PROJECT_VERSION, PROJECT_NAME
+from .internal.constants import _PROJECT_VERSION, _PROJECT_NAME
 from .internal.utils import is_valid_email
 from .internal.wiki_title_finder import WikiTitleFinder
 
@@ -18,7 +18,7 @@ class WikiSearch:
         self._wiki = wikipediaapi.Wikipedia(
             language='ru',
             extract_format=wikipediaapi.ExtractFormat.WIKI,
-            user_agent=f'{PROJECT_NAME}/{PROJECT_VERSION} (https://github.com/KvaytG/ru-wiki-search; {email})'
+            user_agent=f'{_PROJECT_NAME}/{_PROJECT_VERSION} (https://github.com/KvaytG/ru-wiki-search; {email})'
         )
         self._wiki_title_finder = WikiTitleFinder()
         self._wiki_title_finder.load()

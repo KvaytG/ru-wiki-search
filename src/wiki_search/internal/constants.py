@@ -1,3 +1,3 @@
 
-PROJECT_NAME = "RuWikiSearch"
-PROJECT_VERSION = "1.0.1"
+_PROJECT_NAME = "RuWikiSearch"
+_PROJECT_VERSION = "1.0.1"
