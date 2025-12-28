@@ -10,14 +10,14 @@ A lightweight library for high-speed local searching through Russian Wikipedia t
 ```python
 from wiki_search import WikiSearch
 
-searcher = WikiSearch()
+searcher = WikiSearch('your-email@example.com')
 
-result = searcher.search("Единой России")
+result = searcher.search('Единой России')
 
 if result:
-    print(f"Title: {result['title']}")      # Единая Россия
-    print(f"URL: {result['url']}")          # https://ru.wikipedia.org/wiki/Единая_Россия
-    print(f"Summary: {result['summary']}")  # Всероссийская политическая партия «Единая Россия»...
+    print(f'Title: {result["title"]}')      # Единая Россия
+    print(f'URL: {result["url"]}')          # https://ru.wikipedia.org/wiki/Единая_Россия
+    print(f'Summary: {result["summary"]}')  # Всероссийская политическая партия «Единая Россия»...
 ```
 
 ## 📥 Installation
