@@ -1,3 +1,3 @@
-from .wiki_search import WikiSearch
+from .wiki_searcher import WikiSearcher
 
-__all__ = ['WikiSearch']
+__all__ = ['WikiSearcher']

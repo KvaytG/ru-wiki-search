@@ -11,7 +11,7 @@ _SENTENCES_PATTERN = re.compile(r'(?<=[.!?])\s+')
 _SENTENCE_END_PATTERN = re.compile(r'[.!?]$')
 
 
-class WikiSearch:
+class WikiSearcher:
     def __init__(self, email: str):
         if not is_valid_email(email):
             raise ValueError(f"'{email}' is not a valid email address.")

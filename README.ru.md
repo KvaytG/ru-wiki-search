@@ -8,9 +8,9 @@
 ## 📚 Использование
 
 ```python
-from wiki_search import WikiSearch
+from wiki_search import WikiSearcher
 
-searcher = WikiSearch('your-email@example.com')
+searcher = WikiSearcher('your-email@example.com')
 
 result = searcher.search('Единой России')
 
