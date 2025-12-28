@@ -1,8 +1,10 @@
 import re
-import string
 
 _SPACE_PATTERN = re.compile(r'\s+')
-_USERNAME_PATTERN = re.compile(rf'^[a-zA-Zа-яА-ЯёЁ0-9{re.escape(string.punctuation)}]+$')
+
+_allowed_special = re.escape(".!#$%&'*+/=?^_{|}~-")
+_USERNAME_PATTERN = re.compile(rf"^[a-zA-Zа-яА-ЯёЁ0-9{_allowed_special}]+$")
+
 _IDN_PATTERN = re.compile(r'^[a-z0-9-]+$', re.IGNORECASE)
 
 
@@ -19,7 +21,7 @@ def _is_valid_username(username: str) -> bool:
 
 
 def _is_valid_domain(domain: str) -> bool:
-    if not domain or domain.count('.') == 0 or len(domain) > 253:
+    if (not domain) or ('.' not in domain) or (len(domain) > 253):
         return False
     if domain.endswith('.'):
         domain = domain[:-1]
@@ -29,7 +31,7 @@ def _is_valid_domain(domain: str) -> bool:
         return False
     subdomains = ascii_domain.split('.')
     tld = subdomains[-1]
-    if len(tld) < 2 or tld.isdigit():
+    if (len(tld) < 2) or tld.isdigit():
         return False
     for subdomain in subdomains:
         if not (1 <= len(subdomain) <= 63):
@@ -44,7 +46,7 @@ def _is_valid_domain(domain: str) -> bool:
 def is_valid_email(email: str) -> bool:
     """ INTERNAL FUNCTION! """
     email = _remove_redundant_whitespaces(email)
-    if len(email) > 254 or '@' not in email:
+    if (len(email) > 254) or ('@' not in email):
         return False
     username, domain = email.rsplit('@', 1)
     if not(_is_valid_username(username)) or not(_is_valid_domain(domain)):
