@@ -1,20 +1,21 @@
 [project]
 name = "ru-wiki-search"
-version = "1.2.0"
+version = "1.3.0"
 description = "Smart search on Russian Wikipedia."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "wikipedia-api>=0.6.0",
     "pymorphy3>=2.0.1",
     "rapidfuzz>=3.0.0",
     "tqdm>=4.65.0",
     "requests>=2.31.0",
-    "regex>=2023.10.3",
+    "platformdirs>=3.0.0",
+    "filelock>=3.12.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+tune = ["numpy>=1.24", "optuna>=3.5"]
+dev = ["pytest>=7.0", "numpy>=1.24", "optuna>=3.5"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -22,3 +23,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -13,9 +13,9 @@ dist/
 .venv/
 venv/
 
-# Tests
-tests/
-test/
-
-# Resources
+# Local index (старое расположение, до 1.3.0)
 src/wiki_search/resources/
+
+# Результаты подбора весов
+ranking.json
+.pytest_cache/

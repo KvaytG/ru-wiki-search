@@ -1,181 +1,188 @@
 #
 # wiki_title_finder.py
 #
+from __future__ import annotations
 
-import gzip
+import logging
 import os
-import pathlib
-import re
 import sqlite3
-import string
-import pymorphy3
+import threading
+from dataclasses import dataclass, field
+
 import requests
-from .scoring import calculate_score
 
-_CURRENT_DIR = pathlib.Path(__file__).parent.resolve()
-_RESOURCES_PATH = _CURRENT_DIR.parent / "resources"
+from .http import DEFAULT_TIMEOUT, make_session
+from .index_builder import DUMP_URL, MIN_FTS_LEN, ensure_index
+from .lemmatizer import Lemmatizer
+from .paths import resolve_data_dir
+from .ranking import RankingConfig
+from .scoring import Features, combine, extract_features
+from .text import collapse_spaces, normalize_text, split_words
+
+logger = logging.getLogger(__name__)
+
+CANDIDATE_LIMIT = 1000
 
 
-class RankingConfig:
-    """ Параметры подобраны эмпирически """
-    W_SIM = 2.1599
-    W_RAW_RATIO = 0.3250
-    EXACT_BONUS = 0.3274
-    EXACT_LEMMA_RATIO = 0.2627
-    BRACKETS_PENALTY = 0.9991
-    W_LEN_PENALTY = 0.0000
+def _phrase(text: str) -> str:
+    return '"' + text.replace('"', '""') + '"'
+
+
+@dataclass(frozen=True)
+class CandidateSet:
+    query_lower: str
+    query_lemmas: str
+    rows: list[tuple[str, str]] = field(default_factory=list)
 
 
 class WikiTitleFinder:
-    def __init__(self, user_agent: str):
+    def __init__(
+        self,
+        user_agent: str | None = None,
+        data_dir: str | os.PathLike | None = None,
+        *,
+        ranking: RankingConfig | None = None,
+        dump_url: str = DUMP_URL,
+        session: requests.Session | None = None,
+        show_progress: bool = True,
+        timeout=DEFAULT_TIMEOUT,
+    ):
         self._user_agent = user_agent
-        self._config = RankingConfig()
-        self._db_file = os.path.join(_RESOURCES_PATH, "wiki-titles.db")
-        self._archive_file = os.path.join(_RESOURCES_PATH, "ru-wiki-latest-all-titles.gz")
-        self._morph = pymorphy3.MorphAnalyzer()
-        self._lemma_cache = {}
-        self._conn = None
-        self._is_loaded = False
-        self._word_pattern = re.compile(r'[а-яА-ЯёЁ\w]+')
+        self._data_dir = resolve_data_dir(data_dir)
+        self._ranking = ranking or RankingConfig()
+        self._dump_url = dump_url
+        self._session = session
+        self._show_progress = show_progress
+        self._timeout = timeout
+        self._lemmatizer = Lemmatizer()
+        self._conn: sqlite3.Connection | None = None
+        self._lock = threading.Lock()
 
-    @staticmethod
-    def _normalize_text(text: str) -> str:
-        return text.lower().replace('ё', 'е')
+    @property
+    def ranking(self) -> RankingConfig:
+        return self._ranking
 
-    def _get_lemma(self, word: str) -> str:
-        word = self._normalize_text(word)
-        if word not in self._lemma_cache:
-            self._lemma_cache[word] = self._morph.parse(word)[0].normal_form.replace('ё', 'е')
-        return self._lemma_cache[word]
+    @property
+    def data_dir(self):
+        return self._data_dir
 
-    def _lemmatize_text(self, text: str) -> str:
-        words = self._word_pattern.findall(self._normalize_text(text))
-        return " ".join([self._get_lemma(w) for w in words])
-
-    def _download_and_build(self):
-        os.makedirs(_RESOURCES_PATH, exist_ok=True)
-        url = "https://dumps.wikimedia.org/ruwiki/latest/ruwiki-latest-all-titles-in-ns0.gz"
-        headers = {'User-Agent': self._user_agent}
-        if not os.path.exists(self._archive_file):
-            response = requests.get(url, stream=True, headers=headers)
-            response.raise_for_status()
-            total = int(response.headers.get('content-length', 0))
-            from tqdm import tqdm
-            with tqdm(total=total, unit='iB', unit_scale=True, desc="Downloading dump", ncols=100) as pbar:
-                with open(self._archive_file, 'wb') as f:
-                    for data in response.iter_content(chunk_size=8192):
-                        f.write(data)
-                        pbar.update(len(data))
-        conn = None
-        try:
-            conn = sqlite3.connect(self._db_file)
-            cursor = conn.cursor()
-            cursor.execute('CREATE VIRTUAL TABLE titles_fts USING fts5(title, lemmas, tokenize="trigram")')
-            _ru_pattern = re.compile(r'^[а-яА-ЯёЁ\s\d' + re.escape(string.punctuation + '–«»') + r']+$')
-            seen = set()
-            batch = []
-            with gzip.open(self._archive_file, 'rt', encoding='utf-8') as f:
-                from tqdm import tqdm
-                for line in tqdm(f, desc="Building DB", unit="line", ncols=100):
-                    title = line.replace('_', ' ').strip()
-                    if len(title) >= 3 and _ru_pattern.match(title):
-                        lower_t = self._normalize_text(title)
-                        if lower_t not in seen:
-                            seen.add(lower_t)
-                            batch.append((title, self._lemmatize_text(title)))
-                            if len(batch) >= 50000:
-                                cursor.executemany("INSERT INTO titles_fts (title, lemmas) VALUES (?, ?)", batch)
-                                batch = []
-                                conn.commit()
-            if batch:
-                cursor.executemany("INSERT INTO titles_fts (title, lemmas) VALUES (?, ?)", batch)
-                conn.commit()
-            cursor.execute("INSERT INTO titles_fts(titles_fts) VALUES('optimize')")
-            conn.commit()
-            conn.close()
-            conn = None
-        except Exception as e:
-            if conn:
-                conn.close()
-            if os.path.exists(self._db_file):
-                os.remove(self._db_file)
-            raise RuntimeError(f"Failed to build DB: {e}")
-        finally:
-            if os.path.exists(self._archive_file):
-                os.remove(self._archive_file)
-        self.load()
-
-    def load(self):
-        if self._is_loaded:
-            return
-        if not os.path.exists(self._db_file):
-            self._download_and_build()
-            return
-        self._conn = sqlite3.connect(self._db_file, check_same_thread=False)
-        self._is_loaded = True
-
-    def find(self, query: str, top_n: int = 10) -> list[str]:
-        if not self._is_loaded or self._conn is None:
-            raise RuntimeError("Call .load() first")
-        raw_words = self._word_pattern.findall(self._normalize_text(query))
-        if not raw_words:
-            return []
-        word_groups = []
-        for w in raw_words:
-            w_esc = w.replace('"', '""')
-            lemma = self._get_lemma(w)
-            if lemma != w:
-                word_groups.append(f'("{w_esc}" OR "{lemma}")')
-            else:
-                word_groups.append(f'"{w_esc}"')
-        cursor = self._conn.cursor()
-        rows = []
-        strict_match_query = " AND ".join(word_groups)
-        try:
-            cursor.execute(
-                "SELECT title, lemmas FROM titles_fts WHERE titles_fts MATCH ? ORDER BY rank LIMIT 1000",
-                (strict_match_query,)
-            )
-            rows = cursor.fetchall()
-        except sqlite3.OperationalError:
-            pass
-        if not rows:
-            soft_match_query = " OR ".join(word_groups)
-            try:
-                cursor.execute(
-                    "SELECT title, lemmas FROM titles_fts WHERE titles_fts MATCH ? ORDER BY rank LIMIT 1000",
-                    (soft_match_query,)
-                )
-                rows = cursor.fetchall()
-            except sqlite3.OperationalError:
-                return []
-        if not rows:
-            return []
-        query_lemmas = self._lemmatize_text(query)
-
-        def score_func(row: tuple) -> float:
-            title, lemmas = row[0], row[1]
-            return calculate_score(
-                query=query,
-                title=title,
-                query_lemmas=query_lemmas,
-                title_lemmas=lemmas,
-                w_sim=self._config.W_SIM,
-                w_raw_ratio=self._config.W_RAW_RATIO,
-                exact_bonus=self._config.EXACT_BONUS,
-                exact_lemma_ratio=self._config.EXACT_LEMMA_RATIO,
-                brackets_penalty=self._config.BRACKETS_PENALTY,
-                w_len_penalty=self._config.W_LEN_PENALTY,
-            )
-
-        ranked = sorted(rows, key=score_func, reverse=True)
-        return [item[0] for item in ranked[:top_n]]
-
-    def close(self):
+    def load(self) -> None:
         if self._conn is not None:
-            self._conn.close()
-            self._conn = None
-            self._is_loaded = False
+            return
+
+        owned: list[requests.Session] = []
+
+        def session_factory() -> requests.Session:
+            if self._session is not None:
+                return self._session
+            session = make_session(self._user_agent)
+            owned.append(session)
+            return session
+
+        has_ua = self._session is not None or bool(self._user_agent)
+        try:
+            db_path = ensure_index(
+                self._data_dir, self._lemmatizer,
+                session_factory=session_factory if has_ua else None,
+                dump_url=self._dump_url, show_progress=self._show_progress,
+                timeout=self._timeout,
+            )
+        finally:
+            for session in owned:
+                session.close()
+        self._conn = sqlite3.connect(
+            f"{db_path.as_uri()}?mode=ro", uri=True, check_same_thread=False
+        )
+
+    def close(self) -> None:
+        conn, self._conn = getattr(self, "_conn", None), None
+        if conn is not None:
+            conn.close()
+
+    def __enter__(self) -> "WikiTitleFinder":
+        self.load()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def info(self) -> dict[str, str]:
+        self.load()
+        with self._lock:
+            return dict(self._conn.execute("SELECT key, value FROM meta"))  # type: ignore[union-attr]
+
+    def _query(self, sql: str, params: tuple) -> list[tuple]:
+        assert self._conn is not None
+        with self._lock:
+            try:
+                return self._conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError as e:
+                logger.debug("FTS query failed (%s): %s", params, e)
+                return []
+
+    def _fts(self, match: str, limit: int) -> list[tuple]:
+        return self._query(
+            "SELECT title, lemmas FROM titles_fts WHERE titles_fts MATCH ? ORDER BY rank LIMIT ?",
+            (match, limit),
+        )
+
+    def _short(self, norm: str) -> list[tuple[str, str]]:
+        rows = self._query("SELECT title FROM short_titles WHERE norm = ?", (norm,))
+        return [(t, self._lemmatizer.lemmatize_text(t)) for (t,) in rows]
+
+    def candidates(self, query: str, limit: int = CANDIDATE_LIMIT) -> CandidateSet:
+        self.load()
+        q = query.strip()
+        words = split_words(q)
+        if not words:
+            return CandidateSet(q.lower(), "")
+
+        query_lemmas = self._lemmatizer.lemmatize_text(q)
+        rows = self._fetch(words, collapse_spaces(normalize_text(q)), limit)
+        return CandidateSet(q.lower(), query_lemmas, rows)
+
+    def _fetch(self, words: list[str], norm_query: str, limit: int) -> list[tuple]:
+        long_words = [w for w in words if len(w) >= MIN_FTS_LEN]
+        if long_words:
+            groups = []
+            for w in dict.fromkeys(long_words):
+                lemma = self._lemmatizer.lemma(w)
+                alts = [w] if lemma == w or len(lemma) < MIN_FTS_LEN else [w, lemma]
+                groups.append("(" + " OR ".join(_phrase(a) for a in alts) + ")")
+            rows = self._fts(" AND ".join(groups), limit)
+            if not rows and len(groups) > 1:
+                rows = self._fts(" OR ".join(groups), limit)
+            return rows
+        if len(norm_query) >= MIN_FTS_LEN:
+            return self._fts(_phrase(norm_query), limit)
+        return self._short(norm_query)
+
+    def has_title(self, title: str) -> bool:
+        self.load()
+        norm = collapse_spaces(normalize_text(title))
+        words = split_words(title)
+        if not words:
+            return False
+        rows = self._fetch(words, norm, CANDIDATE_LIMIT)
+        return any(collapse_spaces(normalize_text(t)) == norm for t, _ in rows)
+
+    @staticmethod
+    def features(cands: CandidateSet) -> list[Features]:
+        return [
+            extract_features(cands.query_lower, cands.query_lemmas, title, lemmas)
+            for title, lemmas in cands.rows
+        ]
+
+    def rank(self, cands: CandidateSet, top_n: int = 10) -> list[str]:
+        scores = [combine(f, self._ranking) for f in self.features(cands)]
+        order = sorted(range(len(scores)), key=scores.__getitem__, reverse=True)  # стабильно
+        return [cands.rows[i][0] for i in order[:top_n]]
+
+    def find(self, query: str, top_n: int = 10) -> list[str]:
+        return self.rank(self.candidates(query), top_n)

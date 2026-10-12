@@ -1,7 +1,6 @@
 #
 # email.py
 #
-
 import re
 
 _SPACE_PATTERN = re.compile(r'\s+')

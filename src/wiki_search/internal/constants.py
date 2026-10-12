@@ -1,6 +1,11 @@
 #
 # constants.py
 #
+from importlib.metadata import PackageNotFoundError, version
 
 PROJECT_NAME = "RuWikiSearch"
-PROJECT_VERSION = "1.2.0"
+
+try:
+    PROJECT_VERSION = version("ru-wiki-search")
+except PackageNotFoundError:
+    PROJECT_VERSION = "0+unknown"
